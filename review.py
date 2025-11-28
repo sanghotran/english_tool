@@ -12,6 +12,7 @@ import pygame
 import random
 import io
 from deep_translator import GoogleTranslator
+import speech_recognition as sr
 
 # --- CẤU HÌNH ---
 DATA_FILE = "data_english_pro.json"
@@ -31,6 +32,8 @@ class EnglishProApp(ctk.CTk):
             pygame.mixer.init()
         except Exception as e:
             print(f"Lỗi khởi tạo âm thanh: {e}")
+
+        self.recognizer = sr.Recognizer()
 
         # Dữ liệu
         self.data = self.load_data()
@@ -216,10 +219,19 @@ class EnglishProApp(ctk.CTk):
         self.lbl_progress = ctk.CTkLabel(frame, text="Đang tải dữ liệu...", font=("Arial", 14))
         self.lbl_progress.pack(pady=10)
 
-        # Nút nghe to
-        self.btn_listen = ctk.CTkButton(frame, text="🔊 NGHE (F1)", font=("Arial", 16, "bold"), height=60,
+        btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=(20,5))
+
+        # Nút Nghe (Bên trái)
+        self.btn_listen = ctk.CTkButton(btn_frame, text="🔊 NGHE (F1)", font=("Arial", 16, "bold"), height=60,
                                         command=lambda: self.play_audio_thread(self.current_item['text'] if self.current_item else ""))
-        self.btn_listen.pack(fill="x", pady=(20, 5))
+        self.btn_listen.pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        # Nút Nói (Bên phải) - Mới thêm
+        self.btn_mic = ctk.CTkButton(btn_frame, text="🎤 NÓI (F2)", font=("Arial", 16, "bold"), height=60, 
+                                     fg_color="#D84315", hover_color="#BF360C",
+                                     command=self.start_record_thread)
+        self.btn_mic.pack(side="right", fill="x", expand=True, padx=(5, 0))
 
         # Hiển thị nghĩa tiếng Việt
         self.lbl_meaning = ctk.CTkLabel(frame, text="", font=("Arial", 14, "italic"), text_color="#FFA726")
@@ -230,6 +242,8 @@ class EnglishProApp(ctk.CTk):
         self.entry_answer.pack(fill="x", pady=10)
         self.entry_answer.bind("<Return>", self.check_answer)
         self.entry_answer.bind("<F1>", lambda e: self.btn_listen.invoke())
+        # Thêm phím tắt F2 cho Mic
+        self.entry_answer.bind("<F2>", lambda e: self.btn_mic.invoke())
 
         self.btn_check = ctk.CTkButton(frame, text="Kiểm tra (Enter)", command=self.check_answer)
         self.btn_check.pack(pady=5)
@@ -357,6 +371,50 @@ class EnglishProApp(ctk.CTk):
             elif opcode == 'replace':
                 self.txt_diff.insert("end", original[a0:a1], "miss")
                 self.txt_diff.insert("end", f"[{user[b0:b1]}]", "wrong")
+
+    # --- XỬ LÝ GIỌNG NÓI (STT) ---
+    def start_record_thread(self):
+        # Chạy luồng riêng để không đơ giao diện khi đang thu âm
+        threading.Thread(target=self._run_record).start()
+
+    def _run_record(self):
+        # Đổi màu nút để báo đang thu âm
+        self.btn_mic.configure(text="🔴 Đang nghe...", fg_color="red", state="disabled")
+        
+        try:
+            with sr.Microphone() as source:
+                # Tự động lọc tiếng ồn môi trường (0.5s đầu)
+                self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                
+                # Bắt đầu nghe (giới hạn 5 giây để không bị treo)
+                audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=10)
+                
+                self.btn_mic.configure(text="⏳ Đang xử lý...")
+                
+                # Gửi lên Google để dịch ra chữ
+                text_spoken = self.recognizer.recognize_google(audio, language="en-US")
+                
+                # Cập nhật giao diện
+                self.after(0, lambda: self._update_input_with_voice(text_spoken))
+
+        except sr.WaitTimeoutError:
+            self.after(0, lambda: messagebox.showinfo("Mic", "Không nghe thấy gì cả. Hãy nói to lên!"))
+        except sr.UnknownValueError:
+            self.after(0, lambda: messagebox.showwarning("Phát âm", "Máy không hiểu bạn nói gì.\n(Phát âm chưa chuẩn hoặc mic ồn)"))
+        except Exception as e:
+            print(f"Lỗi Mic: {e}")
+            self.after(0, lambda: messagebox.showerror("Lỗi", "Không thể kết nối Micro hoặc Internet."))
+        finally:
+            # Trả lại trạng thái nút cũ
+            self.after(0, lambda: self.btn_mic.configure(text="🎤 NÓI (F2)", fg_color="#D84315", state="normal"))
+
+    def _update_input_with_voice(self, text):
+        # Điền chữ nói được vào ô nhập liệu
+        self.entry_answer.delete(0, "end")
+        self.entry_answer.insert(0, text)
+        
+        # Tự động bấm nút Kiểm tra luôn (cho ngầu)
+        self.check_answer()
 
 if __name__ == "__main__":
     app = EnglishProApp()
