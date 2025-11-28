@@ -1,6 +1,0 @@
-customtkinter
-edge-tts
-pygame
-deep-translator
-SpeechRecognition
-pyaudio

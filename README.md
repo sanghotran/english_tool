@@ -1,26 +1,30 @@
-# 🎧 Super English Pro - Ứng Dụng Học Tiếng Anh Thông Minh
+# 🎧 Super English Pro (Groq Edition)
 
-**Super English Pro** là phần mềm desktop giúp luyện nghe chép chính tả (Dictation) và luyện nói (Shadowing). Ứng dụng tích hợp thuật toán **Lặp lại ngắt quãng (SRS)** giống Anki để tối ưu hóa việc ghi nhớ, cùng công nghệ **AI Text-to-Speech** và **Speech-to-Text**.
+**Super English Pro** là phần mềm học tiếng Anh thông minh trên Desktop, kết hợp thuật toán **Lặp lại ngắt quãng (SRS)** với sức mạnh của **Groq AI (Llama 3)** để tạo ra trải nghiệm học tập cá nhân hóa cực cao.
 
-## ✨ Tính Năng Chính
+![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
+![AI](https://img.shields.io/badge/AI-Groq%20Llama3-orange)
+![Database](https://img.shields.io/badge/Database-SQLite-green)
 
-1.  **🧠 SRS (Spaced Repetition):** Tự động tính toán lịch ôn tập (1, 2, 4, 8... ngày) dựa trên kết quả học.
-2.  **🗣️ AI Neural Voice:** Giọng đọc AI tự nhiên (Edge TTS), stream trực tiếp từ RAM (không tạo file rác, không lỗi Permission).
-3.  **🎙️ Luyện Nói (Speech-to-Text):** Tích hợp Google Voice để kiểm tra phát âm của bạn.
-4.  **🌏 Dịch Thuật Tự Động:**
-    * Nhập liệu: Gõ tiếng Việt -> Tự dịch sang Anh.
-    * Ôn tập: Tự động hiện nghĩa tiếng Việt khi nghe.
-5.  **⚡ Smart Matching:** So sánh thông minh, bỏ qua lỗi viết hoa/thường và sự khác biệt dấu nháy.
-6.  **🎨 Giao diện:** Dark Mode hiện đại với CustomTkinter.
+## ✨ Tính Năng Đột Phá
+
+1.  **🧠 Groq AI Integration:** Sử dụng model `openai/gpt-oss-120b` để dịch và giải thích ngữ cảnh sử dụng của câu (thay vì chỉ dịch nghĩa đen).
+2.  **🔒 Smart Review Logic:**
+    * Khi ôn tập, nghĩa tiếng Việt sẽ bị **ẨN**.
+    * Chỉ khi bạn nghe và gõ/nói ĐÚNG, AI mới hiện nghĩa và giải thích.
+3.  **💾 Database Storage (Peewee):** Dữ liệu lưu trong SQLite (`english_pro.db`), an toàn, không lo mất file, hỗ trợ hàng ngàn câu.
+4.  **🗣️ AI Neural Voice:** Giọng đọc Edge TTS tự nhiên, stream trực tiếp từ RAM (Zero-latency, No temporary files).
+5.  **🎙️ Luyện Nói (Shadowing):** Tích hợp Google Voice để chấm điểm phát âm của bạn.
+6.  **📊 SRS Algorithm:** Tự động tính toán ngày ôn lại (1, 2, 4, 8... ngày) dựa trên độ nhớ.
 
 ## 🛠️ Cài Đặt
 
 ### 1. Yêu cầu
 * Python 3.8 trở lên.
-* Kết nối Internet (để dùng AI Voice và Dịch thuật).
+* API Key miễn phí từ [Groq Console](https://console.groq.com).
 
 ### 2. Cài đặt thư viện
-Chạy lệnh sau trong Terminal/CMD:
+Mở Terminal tại thư mục dự án và chạy:
 
 ```bash
-pip install -r requirements.txt
+pip install customtkinter edge-tts pygame peewee groq deep-translator SpeechRecognition
