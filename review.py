@@ -30,7 +30,7 @@ class Sentence(BaseModel):
 
 class Vocabulary(BaseModel):
     word = TextField(unique=True)
-    meaning = TextField(null=True)
+    meaning = TextField(null=True) # Sẽ lưu Nghĩa + HDSD
     level = IntegerField(default=0)
     next_review = DateField(default=datetime.date.today)
 
@@ -50,7 +50,7 @@ ctk.set_default_color_theme("blue")
 class EnglishApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Super English Pro: Clean UI")
+        self.title("Super English Pro: AI Vocab Definitions")
         self.geometry("1100x850")
 
         try:
@@ -62,7 +62,7 @@ class EnglishApp(ctk.CTk):
         self.review_queue = []
         self.current_item = None
 
-        # --- SIDEBAR (MENU BÊN TRÁI) ---
+        # --- SIDEBAR ---
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
@@ -72,27 +72,21 @@ class EnglishApp(ctk.CTk):
         # Logo
         ctk.CTkLabel(self.sidebar, text="ENGLISH PRO", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=30)
 
-        # 1. NHÓM CHỨC NĂNG HỌC TẬP
+        # MENU
         ctk.CTkLabel(self.sidebar, text="KHÔNG GIAN HỌC:", font=("Arial", 12, "bold"), text_color="gray", anchor="w").pack(fill="x", padx=20, pady=(10, 5))
-        
         self.btn_nav_sent = ctk.CTkButton(self.sidebar, text="🗣️ Ôn Câu (Dictation)", fg_color="transparent", border_width=2, anchor="w", command=self.nav_sentence)
         self.btn_nav_sent.pack(fill="x", pady=5, padx=20)
-        
         self.btn_nav_vocab = ctk.CTkButton(self.sidebar, text="🧠 Ôn Từ (Vocab)", fg_color="transparent", border_width=2, anchor="w", command=self.nav_vocab)
         self.btn_nav_vocab.pack(fill="x", pady=5, padx=20)
 
         ctk.CTkFrame(self.sidebar, height=2, fg_color="#455A64").pack(fill="x", pady=20, padx=20)
 
-        # 2. NHÓM QUẢN LÝ
         ctk.CTkLabel(self.sidebar, text="QUẢN LÝ:", font=("Arial", 12, "bold"), text_color="gray", anchor="w").pack(fill="x", padx=20, pady=(10, 5))
-
         self.btn_nav_add = ctk.CTkButton(self.sidebar, text="📝 Thêm Dữ Liệu", fg_color="transparent", border_width=2, anchor="w", command=self.nav_add)
         self.btn_nav_add.pack(fill="x", pady=5, padx=20)
-        
         self.btn_nav_settings = ctk.CTkButton(self.sidebar, text="⚙️ Cài Đặt API", fg_color="transparent", border_width=2, anchor="w", command=self.nav_settings)
         self.btn_nav_settings.pack(fill="x", pady=5, padx=20)
         
-        # Thống kê
         self.lbl_stats = ctk.CTkLabel(self.sidebar, text="Loading...", text_color="gray", justify="left")
         self.lbl_stats.pack(side="bottom", pady=20)
 
@@ -100,22 +94,18 @@ class EnglishApp(ctk.CTk):
         self.main = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.main.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
 
-        # Init Frames
         self.frame_add = self.ui_add_unified()
         self.frame_sent = self.ui_sent_review()
         self.frame_vocab = self.ui_vocab_review()
         self.frame_settings = self.ui_settings()
 
         self.frames = [self.frame_add, self.frame_sent, self.frame_vocab, self.frame_settings]
-
-        # Mặc định vào Ôn câu
         self.nav_sentence()
 
     # ==========================================
-    # 3. ĐIỀU HƯỚNG (NAVIGATION)
+    # 3. UTILS & HELPERS
     # ==========================================
     def reset_buttons(self):
-        # Đặt lại màu cho tất cả nút về trạng thái chưa chọn
         for btn in [self.btn_nav_sent, self.btn_nav_vocab, self.btn_nav_add, self.btn_nav_settings]:
             btn.configure(fg_color="transparent")
 
@@ -125,7 +115,7 @@ class EnglishApp(ctk.CTk):
     def nav_sentence(self):
         self.reset_buttons()
         self.hide_all_frames()
-        self.btn_nav_sent.configure(fg_color="#1565C0") # Highlight nút này
+        self.btn_nav_sent.configure(fg_color="#1565C0")
         self.frame_sent.pack(fill="both", expand=True)
         self.mode = "sentence"
         self.update_stats()
@@ -134,7 +124,7 @@ class EnglishApp(ctk.CTk):
     def nav_vocab(self):
         self.reset_buttons()
         self.hide_all_frames()
-        self.btn_nav_vocab.configure(fg_color="#D84315") # Highlight nút này
+        self.btn_nav_vocab.configure(fg_color="#D84315")
         self.frame_vocab.pack(fill="both", expand=True)
         self.mode = "vocab"
         self.update_stats()
@@ -143,14 +133,14 @@ class EnglishApp(ctk.CTk):
     def nav_add(self):
         self.reset_buttons()
         self.hide_all_frames()
-        self.btn_nav_add.configure(fg_color="#2E7D32") # Highlight nút này
+        self.btn_nav_add.configure(fg_color="#2E7D32")
         self.frame_add.pack(fill="both", expand=True)
         self.update_stats()
 
     def nav_settings(self):
         self.reset_buttons()
         self.hide_all_frames()
-        self.btn_nav_settings.configure(fg_color="#546E7A") # Highlight nút này
+        self.btn_nav_settings.configure(fg_color="#546E7A")
         self.frame_settings.pack(fill="both", expand=True)
 
     # ==========================================
@@ -172,7 +162,7 @@ class EnglishApp(ctk.CTk):
                 self.lbl_stats.configure(text=f"[TỪ]\nTổng: {vocab_total} | Cần ôn: {due}")
         except: pass
 
-    # --- TTS & AUDIO ---
+    # --- TTS & MIC ---
     def play_audio(self, text):
         threading.Thread(target=self._tts_thread, args=(text,)).start()
 
@@ -215,7 +205,6 @@ class EnglishApp(ctk.CTk):
     # ==========================================
     def ui_add_unified(self):
         frame = ctk.CTkFrame(self.main, fg_color="transparent")
-        
         tabview = ctk.CTkTabview(frame)
         tabview.pack(fill="both", expand=True)
         
@@ -246,7 +235,10 @@ class EnglishApp(ctk.CTk):
         
         self.txt_vocab_input = ctk.CTkTextbox(tab_vocab, height=250, font=("Arial", 14))
         self.txt_vocab_input.pack(fill="both", expand=True, pady=10)
-        ctk.CTkButton(tab_vocab, text="Lưu Vào Kho Từ Vựng", fg_color="#D84315", height=40, command=self.save_vocab).pack(fill="x", pady=10)
+        
+        # Nút Lưu Từ giờ sẽ gọi AI để lấy nghĩa chi tiết
+        self.btn_save_vocab = ctk.CTkButton(tab_vocab, text="Lưu & Lấy HDSD (Groq)", fg_color="#D84315", height=40, command=self.save_vocab_ai)
+        self.btn_save_vocab.pack(fill="x", pady=10)
 
         return frame
 
@@ -275,7 +267,9 @@ class EnglishApp(ctk.CTk):
     def generate_vocab(self, event=None):
         topic = self.entry_topic.get().strip()
         key = self.get_key()
-        if not topic or not key: return
+        if not topic or not key: 
+            messagebox.showerror("Lỗi", "Cần nhập chủ đề và API Key!")
+            return
         self.txt_vocab_input.delete("1.0", "end")
         self.txt_vocab_input.insert("1.0", "⏳ Đang tạo từ...")
         threading.Thread(target=self._run_gen, args=(topic, key)).start()
@@ -283,20 +277,85 @@ class EnglishApp(ctk.CTk):
     def _run_gen(self, topic, key):
         try:
             client = Groq(api_key=key)
-            prompt = f"List 10 English words about '{topic}'. Only words, one per line."
+            prompt = f"List 10 English words about '{topic}'. Only words, one per line. No numbering."
             res = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="openai/gpt-oss-120b").choices[0].message.content
-            self.txt_vocab_input.delete("1.0", "end")
-            self.txt_vocab_input.insert("1.0", res.strip())
+            self.after(0, lambda: [self.txt_vocab_input.delete("1.0", "end"), self.txt_vocab_input.insert("1.0", res.strip())])
         except Exception as e:
-            self.txt_vocab_input.delete("1.0", "end")
-            self.txt_vocab_input.insert("1.0", f"Lỗi: {e}")
+            self.after(0, lambda: [self.txt_vocab_input.delete("1.0", "end"), self.txt_vocab_input.insert("1.0", f"Lỗi: {e}")])
 
-    def save_vocab(self):
+    # --- LOGIC LƯU TỪ VỰNG + LẤY NGHĨA AI (MỚI) ---
+    def save_vocab_ai(self):
+        content = self.txt_vocab_input.get("1.0", "end").strip()
+        if not content or "⏳" in content: return
+        
+        key = self.get_key()
+        
+        # Nếu không có Key thì dùng Google Dịch như cũ
+        if not key:
+            self.save_vocab_fallback()
+            return
+
+        self.btn_save_vocab.configure(state="disabled", text="⏳ Đang phân tích nghĩa & HDSD...")
+        threading.Thread(target=self._run_save_vocab_ai, args=(content, key)).start()
+
+    def _run_save_vocab_ai(self, text_block, key):
+        # Tách từ để xử lý
+        words = [w.strip() for w in text_block.split('\n') if w.strip()]
+        if not words: 
+            self.after(0, lambda: self.btn_save_vocab.configure(state="normal", text="Lưu & Lấy HDSD (Groq)"))
+            return
+
+        # Gửi 1 cục sang Groq để tiết kiệm thời gian (Batch Processing)
+        try:
+            client = Groq(api_key=key)
+            prompt = f"""
+            I have this list of English words:
+            {', '.join(words)}
+
+            For each word, provide the Vietnamese meaning and a very short usage guide (1 sentence).
+            Output strictly in this format:
+            Word || Meaning || Usage Guide
+
+            Example:
+            Serendipity || Sự tình cờ may mắn || Dùng khi tìm thấy điều tốt đẹp không chủ đích.
+            """
+            
+            res = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="openai/gpt-oss-120b").choices[0].message.content
+            
+            # Xử lý kết quả trả về
+            count = 0
+            for line in res.split('\n'):
+                if "||" in line:
+                    parts = line.split("||")
+                    if len(parts) >= 3:
+                        w = parts[0].strip()
+                        m = parts[1].strip()
+                        u = parts[2].strip()
+                        full_meaning = f"{m}\n💡 HDSD: {u}"
+                        
+                        try:
+                            Vocabulary.get_or_create(word=w, defaults={'meaning': full_meaning})
+                            count += 1
+                        except: pass
+            
+            self.after(0, lambda: [
+                self.txt_vocab_input.delete("1.0", "end"),
+                self.update_stats(),
+                self.btn_save_vocab.configure(state="normal", text="Lưu & Lấy HDSD (Groq)"),
+                messagebox.showinfo("Thành công", f"Đã lưu {count} từ kèm hướng dẫn sử dụng chi tiết!")
+            ])
+
+        except Exception as e:
+            print(e)
+            # Nếu lỗi thì fallback về Google
+            self.after(0, lambda: [self.save_vocab_fallback(), self.btn_save_vocab.configure(state="normal", text="Lưu & Lấy HDSD (Groq)")])
+
+    def save_vocab_fallback(self):
         lines = self.txt_vocab_input.get("1.0", "end").split('\n')
         c = 0
         for l in lines:
             w = l.strip()
-            if w and "⏳" not in w:
+            if w:
                 try: 
                     mean = GoogleTranslator(source='auto', target='vi').translate(w)
                     Vocabulary.get_or_create(word=w, defaults={'meaning': mean})
@@ -304,7 +363,7 @@ class EnglishApp(ctk.CTk):
                 except: pass
         self.txt_vocab_input.delete("1.0", "end")
         self.update_stats()
-        messagebox.showinfo("OK", f"Đã thêm {c} từ vựng.")
+        messagebox.showinfo("OK", f"Đã thêm {c} từ (Dùng Google Dịch).")
 
     # ==========================================
     # 6. ÔN CÂU (SENTENCE REVIEW)
@@ -345,7 +404,7 @@ class EnglishApp(ctk.CTk):
             random.shuffle(self.review_queue)
             self.next_sent()
         else:
-            self.lbl_sent_prog.configure(text="Hết bài ôn câu!")
+            self.lbl_sent_prog.configure(text="Hết bài ôn câu hôm nay!")
             self.lbl_sent_mean.configure(text="")
             self.entry_sent_ans.configure(state="disabled")
 
@@ -366,8 +425,11 @@ class EnglishApp(ctk.CTk):
         user = self.entry_sent_ans.get().strip()
         raw = self.current_item.text.strip()
         
-        ratio = difflib.SequenceMatcher(None, raw.lower(), user.lower()).ratio()
-        self.show_diff(raw, user)
+        u_clean = user.replace("’", "'").rstrip('.!?').lower()
+        o_clean = raw.replace("’", "'").rstrip('.!?').lower()
+        ratio = difflib.SequenceMatcher(None, o_clean, u_clean).ratio()
+        
+        self.show_diff(o_clean, u_clean)
 
         if ratio >= 0.9:
             self.review_queue.pop(0)
@@ -397,22 +459,29 @@ class EnglishApp(ctk.CTk):
 
     def groq_explain_sentence(self):
         if self.current_item.meaning:
-            self.lbl_sent_mean.configure(text=self.current_item.meaning)
+            self.after(0, lambda: self.lbl_sent_mean.configure(text=self.current_item.meaning))
             return
         key = self.get_key()
         if key:
             try:
-                self.lbl_sent_mean.configure(text="⏳ Groq đang phân tích...")
+                self.after(0, lambda: self.lbl_sent_mean.configure(text="⏳ Groq đang phân tích..."))
                 client = Groq(api_key=key)
-                prompt = f"Giải thích ngắn gọn câu: '{self.current_item.text}'"
+                prompt = f"""
+                Dịch và giải thích câu tiếng Anh sau cho người Việt: "{self.current_item.text}"
+                Format trả về ngắn gọn:
+                - Nghĩa: [Nghĩa tiếng Việt sát nhất]
+                - Ngữ cảnh: [Khi nào dùng, với ai, trang trọng hay không]
+                """
+                # (Yêu cầu 1: Không sửa Model)
                 res = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="openai/gpt-oss-120b").choices[0].message.content
                 self.current_item.meaning = res
                 self.current_item.save()
-                self.lbl_sent_mean.configure(text=res)
-            except: self.lbl_sent_mean.configure(text="Lỗi API")
+                self.after(0, lambda: self.lbl_sent_mean.configure(text=res))
+            except: 
+                self.after(0, lambda: self.lbl_sent_mean.configure(text="Lỗi Groq API"))
         else:
             t = GoogleTranslator(source='en', target='vi').translate(self.current_item.text)
-            self.lbl_sent_mean.configure(text=t)
+            self.after(0, lambda: self.lbl_sent_mean.configure(text=t))
 
     # ==========================================
     # 7. ÔN TỪ (VOCAB REVIEW)
@@ -424,7 +493,7 @@ class EnglishApp(ctk.CTk):
         
         self.lbl_vocab_word = ctk.CTkLabel(frame, text="WORD", font=("Arial", 36, "bold"), text_color="#4FC3F7")
         self.lbl_vocab_word.pack(pady=10)
-        self.lbl_vocab_hint = ctk.CTkLabel(frame, text="", font=("Arial", 16, "italic"), text_color="gray")
+        self.lbl_vocab_hint = ctk.CTkLabel(frame, text="", font=("Arial", 16, "italic"), text_color="gray", wraplength=800)
         self.lbl_vocab_hint.pack()
         
         ctk.CTkButton(frame, text="🔊 Nghe", command=lambda: self.play_audio(self.current_item.word)).pack(pady=5)
@@ -471,7 +540,7 @@ class EnglishApp(ctk.CTk):
         if not sent: return
         key = self.get_key()
         if not key:
-            self.lbl_vocab_feed.configure(text="Chưa cài API Key!")
+            self.lbl_vocab_feed.configure(text="Chưa cài API Key!", text_color="red")
             return
         
         self.lbl_vocab_feed.configure(text="⏳ Đang chấm điểm...", text_color="yellow")
@@ -482,15 +551,20 @@ class EnglishApp(ctk.CTk):
             client = Groq(api_key=key)
             prompt = f"Check sentence using '{word}': '{sent}'. Output: Correct/Incorrect, Fix, Better version."
             res = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="openai/gpt-oss-120b").choices[0].message.content
-            self.lbl_vocab_feed.configure(text=res, text_color="white")
-            self.btn_vocab_next.configure(state="normal")
             
+            self.after(0, lambda: [
+                self.lbl_vocab_feed.configure(text=res, text_color="white"),
+                self.btn_vocab_next.configure(state="normal"),
+                self.btn_vocab_next.focus()
+            ])
+            
+            # SRS
             self.review_queue.pop(0)
             self.current_item.level += 1
             self.current_item.next_review = datetime.date.today() + datetime.timedelta(days=2**(self.current_item.level-1))
             self.current_item.save()
         except Exception as e:
-            self.lbl_vocab_feed.configure(text=f"Lỗi: {e}")
+            self.after(0, lambda: self.lbl_vocab_feed.configure(text=f"Lỗi: {e}", text_color="red"))
 
     # ==========================================
     # 8. CÀI ĐẶT
