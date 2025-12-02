@@ -30,7 +30,7 @@ class Sentence(BaseModel):
 
 class Vocabulary(BaseModel):
     word = TextField(unique=True)
-    meaning = TextField(null=True) # Sẽ lưu Nghĩa + HDSD
+    meaning = TextField(null=True)
     level = IntegerField(default=0)
     next_review = DateField(default=datetime.date.today)
 
@@ -50,7 +50,7 @@ ctk.set_default_color_theme("blue")
 class EnglishApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Super English Pro: AI Vocab Definitions")
+        self.title("Super English Pro: Smart Loop")
         self.geometry("1100x850")
 
         try:
@@ -61,6 +61,7 @@ class EnglishApp(ctk.CTk):
         self.mode = "sentence"
         self.review_queue = []
         self.current_item = None
+        self.temp_suggested_sentence = "" # Biến lưu câu gợi ý của AI
 
         # --- SIDEBAR ---
         self.grid_columnconfigure(1, weight=1)
@@ -69,7 +70,6 @@ class EnglishApp(ctk.CTk):
         self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         
-        # Logo
         ctk.CTkLabel(self.sidebar, text="ENGLISH PRO", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=30)
 
         # MENU
@@ -94,9 +94,10 @@ class EnglishApp(ctk.CTk):
         self.main = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.main.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
 
+        # Init Frames
         self.frame_add = self.ui_add_unified()
         self.frame_sent = self.ui_sent_review()
-        self.frame_vocab = self.ui_vocab_review()
+        self.frame_vocab = self.ui_vocab_review() # <--- ĐÃ SỬA CÁI NÀY
         self.frame_settings = self.ui_settings()
 
         self.frames = [self.frame_add, self.frame_sent, self.frame_vocab, self.frame_settings]
@@ -201,7 +202,7 @@ class EnglishApp(ctk.CTk):
         except: messagebox.showinfo("Mic", "Không nghe rõ!")
 
     # ==========================================
-    # 5. UI THÊM DỮ LIỆU (2 TAB)
+    # 4. UI THÊM DỮ LIỆU
     # ==========================================
     def ui_add_unified(self):
         frame = ctk.CTkFrame(self.main, fg_color="transparent")
@@ -211,7 +212,7 @@ class EnglishApp(ctk.CTk):
         tab_sent = tabview.add("🗣️ THÊM CÂU")
         tab_vocab = tabview.add("🧠 THÊM TỪ (AI)")
         
-        # --- TAB CÂU ---
+        # TAB CÂU
         ctk.CTkLabel(tab_sent, text="Nhập câu tiếng Anh:", font=("Arial", 14, "bold")).pack(pady=5)
         f_trans = ctk.CTkFrame(tab_sent)
         f_trans.pack(fill="x", pady=5)
@@ -224,7 +225,7 @@ class EnglishApp(ctk.CTk):
         self.txt_sent_input.pack(fill="both", expand=True, pady=10)
         ctk.CTkButton(tab_sent, text="Lưu Vào Kho Câu", fg_color="#1565C0", height=40, command=self.save_sent).pack(fill="x", pady=10)
 
-        # --- TAB TỪ ---
+        # TAB TỪ
         ctk.CTkLabel(tab_vocab, text="Nhập chủ đề AI gợi ý:", font=("Arial", 14, "bold")).pack(pady=5)
         f_gen = ctk.CTkFrame(tab_vocab)
         f_gen.pack(fill="x", pady=5)
@@ -236,7 +237,7 @@ class EnglishApp(ctk.CTk):
         self.txt_vocab_input = ctk.CTkTextbox(tab_vocab, height=250, font=("Arial", 14))
         self.txt_vocab_input.pack(fill="both", expand=True, pady=10)
         
-        # Nút Lưu Từ giờ sẽ gọi AI để lấy nghĩa chi tiết
+        # Nút Lưu Từ
         self.btn_save_vocab = ctk.CTkButton(tab_vocab, text="Lưu & Lấy HDSD (Groq)", fg_color="#D84315", height=40, command=self.save_vocab_ai)
         self.btn_save_vocab.pack(fill="x", pady=10)
 
@@ -363,7 +364,8 @@ class EnglishApp(ctk.CTk):
                 except: pass
         self.txt_vocab_input.delete("1.0", "end")
         self.update_stats()
-        messagebox.showinfo("OK", f"Đã thêm {c} từ (Dùng Google Dịch).")
+        self.btn_save_vocab.configure(state="normal", text="Lưu & Lấy HDSD (Groq)")
+        messagebox.showinfo("OK", f"Đã thêm {c} từ (Google).")
 
     # ==========================================
     # 6. ÔN CÂU (SENTENCE REVIEW)
@@ -484,7 +486,7 @@ class EnglishApp(ctk.CTk):
             self.after(0, lambda: self.lbl_sent_mean.configure(text=t))
 
     # ==========================================
-    # 7. ÔN TỪ (VOCAB REVIEW)
+    # 7. ÔN TỪ (VOCAB REVIEW) - ĐÃ THÊM NÚT LƯU
     # ==========================================
     def ui_vocab_review(self):
         frame = ctk.CTkFrame(self.main, fg_color="transparent")
@@ -507,6 +509,10 @@ class EnglishApp(ctk.CTk):
         self.lbl_vocab_feed = ctk.CTkLabel(frame, text="", wraplength=800, justify="left")
         self.lbl_vocab_feed.pack()
         
+        # Nút LƯU CÂU GỢI Ý (Mới thêm)
+        self.btn_save_suggested = ctk.CTkButton(frame, text="💾 Lưu câu gợi ý vào Dictation", fg_color="#00897B", state="disabled", command=self.save_suggested_sentence)
+        self.btn_save_suggested.pack(pady=5)
+
         self.btn_vocab_next = ctk.CTkButton(frame, text="Tiếp theo >>", state="disabled", command=self.next_vocab)
         self.btn_vocab_next.pack(pady=20)
         return frame
@@ -533,6 +539,8 @@ class EnglishApp(ctk.CTk):
         self.entry_vocab_sent.focus()
         self.lbl_vocab_feed.configure(text="")
         self.btn_vocab_next.configure(state="disabled")
+        self.btn_save_suggested.configure(state="disabled") # Reset nút lưu
+        self.temp_suggested_sentence = "" # Reset biến tạm
         self.after(500, lambda: self.play_audio(self.current_item.word))
 
     def check_vocab(self, event=None):
@@ -549,11 +557,24 @@ class EnglishApp(ctk.CTk):
     def groq_check_vocab(self, word, sent, key):
         try:
             client = Groq(api_key=key)
-            prompt = f"Check sentence using '{word}': '{sent}'. Output: Correct/Incorrect, Fix, Better version."
+            # Prompt yêu cầu trả về format có || để dễ cắt chuỗi
+            prompt = f"""
+            Check sentence using '{word}': '{sent}'. 
+            Output strict format: 
+            Status (Correct/Incorrect) || Feedback || Better Version (Just the sentence) || Meaning of word
+            """
             res = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="openai/gpt-oss-120b").choices[0].message.content
             
+            # Xử lý kết quả để lấy Better Version
+            parts = res.split("||")
+            display_text = res.replace("||", "\n") # Hiển thị đẹp
+            
+            if len(parts) >= 3:
+                self.temp_suggested_sentence = parts[2].strip() # Lưu câu gợi ý vào biến tạm
+                self.after(0, lambda: self.btn_save_suggested.configure(state="normal")) # Bật nút lưu
+
             self.after(0, lambda: [
-                self.lbl_vocab_feed.configure(text=res, text_color="white"),
+                self.lbl_vocab_feed.configure(text=display_text, text_color="white"),
                 self.btn_vocab_next.configure(state="normal"),
                 self.btn_vocab_next.focus()
             ])
@@ -565,6 +586,32 @@ class EnglishApp(ctk.CTk):
             self.current_item.save()
         except Exception as e:
             self.after(0, lambda: self.lbl_vocab_feed.configure(text=f"Lỗi: {e}", text_color="red"))
+
+    def save_suggested_sentence(self):
+        # 1. Làm sạch chuỗi trước khi lưu
+        text_to_save = self.temp_suggested_sentence.strip()
+        
+        if not text_to_save:
+            messagebox.showwarning("Chú ý", "Không có nội dung để lưu.")
+            return
+
+        try:
+            # 2. Dùng get_or_create đúng cách
+            # Hàm này trả về 2 giá trị: (đối tượng, created=True/False)
+            obj, created = Sentence.get_or_create(text=text_to_save)
+            
+            if created:
+                # Trường hợp A: Chưa có -> Tạo mới thành công
+                messagebox.showinfo("Thành công", f"Đã lưu câu mới vào Dictation:\n\n{text_to_save}")
+                self.btn_save_suggested.configure(state="disabled", text="Đã lưu!")
+            else:
+                # Trường hợp B: Đã có trong kho -> Báo trùng
+                messagebox.showinfo("Thông báo", "Câu này thực tế ĐÃ CÓ trong kho rồi (Bạn có thể tìm thấy ở phần Ôn Câu).")
+                
+        except Exception as e:
+            # Trường hợp C: Lỗi kỹ thuật thực sự (In chi tiết lỗi ra để debug)
+            print(f"Lỗi chi tiết: {e}")
+            messagebox.showerror("Lỗi Kỹ Thuật", f"Không lưu được. Chi tiết lỗi:\n{e}")
 
     # ==========================================
     # 8. CÀI ĐẶT
