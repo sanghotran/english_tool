@@ -1,38 +1,138 @@
-import sys
-import os
+import customtkinter as ctk
+import threading
+import pyaudio
 import wave
+import os
 import tempfile
 import difflib
-import pyaudio
 from groq import Groq
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QLabel, QPushButton, QComboBox, QTextEdit, 
-                             QLineEdit, QMessageBox, QProgressBar, QHBoxLayout)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QIcon
 
-# --- CẤU HÌNH GROQ & AUDIO ---
-AUDIO_RATE = 16000     # Groq chuẩn hóa về 16kHz
+# --- CẤU HÌNH AUDIO & GROQ ---
+AUDIO_RATE = 16000     # Chuẩn của Groq
 AUDIO_CHANNELS = 1     # Mono
 AUDIO_CHUNK = 1024
 
-# --- LUỒNG GHI ÂM (Worker Thread) ---
-class RecorderThread(QThread):
-    finished_recording = pyqtSignal(str) # Gửi đường dẫn file khi xong
+# Cấu hình giao diện
+ctk.set_appearance_mode("Dark")  # Chế độ tối
+ctk.set_default_color_theme("blue")  # Màu chủ đạo
 
+class EnglishTutorApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+
+        # Cấu hình cửa sổ
+        self.title("Groq AI English Tutor")
+        self.geometry("500x650")
+        self.resizable(False, False)
+
+        # Biến trạng thái
         self.is_recording = False
         self.frames = []
+        self.api_key = ""
+        
+        # Data mẫu
+        self.sentences = [
+            "The quick brown fox jumps over the lazy dog.",
+            "I am learning to speak English with confidence.",
+            "Artificial Intelligence helps us learn faster.",
+            "Where is the nearest coffee shop?",
+            "Practice makes perfect."
+        ]
 
-    def run(self):
-        self.is_recording = True
+        self.setup_ui()
+
+    def setup_ui(self):
+        # 1. Tiêu đề & API Key
+        self.lbl_title = ctk.CTkLabel(self, text="LUYỆN NÓI TIẾNG ANH", font=("Arial", 20, "bold"))
+        self.lbl_title.pack(pady=(20, 10))
+
+        self.entry_api = ctk.CTkEntry(self, placeholder_text="Nhập Groq API Key (gsk_...)", width=400, show="*")
+        self.entry_api.pack(pady=5)
+
+        # 2. Chọn câu mẫu
+        self.lbl_select = ctk.CTkLabel(self, text="Chọn câu mẫu:", text_color="#aaa")
+        self.lbl_select.pack(pady=(15, 5))
+
+        self.combo_sentences = ctk.CTkComboBox(self, values=self.sentences, width=400, command=self.update_target_text)
+        self.combo_sentences.set(self.sentences[0])
+        self.combo_sentences.pack(pady=5)
+
+        # Hiển thị câu mẫu (To, Rõ)
+        self.box_target = ctk.CTkTextbox(self, width=400, height=80, font=("Arial", 18), text_color="#4CAF50", fg_color="#2b2b2b")
+        self.box_target.insert("0.0", self.sentences[0])
+        self.box_target.configure(state="disabled") # Không cho sửa
+        self.box_target.pack(pady=10)
+
+        # 3. Nút Ghi âm
+        self.btn_record = ctk.CTkButton(self, text="🎙️ BẮT ĐẦU GHI ÂM", width=200, height=50, 
+                                        font=("Arial", 14, "bold"), fg_color="#1f6aa5", hover_color="#144870",
+                                        command=self.toggle_recording)
+        self.btn_record.pack(pady=20)
+
+        self.lbl_status = ctk.CTkLabel(self, text="Sẵn sàng", text_color="gray")
+        self.lbl_status.pack(pady=0)
+
+        # 4. Khu vực kết quả
+        self.frame_result = ctk.CTkFrame(self, width=400)
+        self.frame_result.pack(pady=20, padx=20, fill="x")
+
+        ctk.CTkLabel(self.frame_result, text="Bạn đã nói:", font=("Arial", 12, "bold")).pack(pady=(10, 0))
+        
+        self.txt_user_input = ctk.CTkTextbox(self.frame_result, height=60, text_color="#ddd")
+        self.txt_user_input.pack(pady=5, padx=10, fill="x")
+        self.txt_user_input.configure(state="disabled")
+
+        # Hàng hiển thị điểm số
+        self.stats_frame = ctk.CTkFrame(self.frame_result, fg_color="transparent")
+        self.stats_frame.pack(pady=10)
+
+        self.lbl_score = ctk.CTkLabel(self.stats_frame, text="Điểm số: --", font=("Arial", 14, "bold"))
+        self.lbl_score.pack(side="left", padx=20)
+
+        self.lbl_confidence = ctk.CTkLabel(self.stats_frame, text="Chất lượng âm: --", font=("Arial", 14))
+        self.lbl_confidence.pack(side="right", padx=20)
+
+        # Feedback text
+        self.lbl_feedback = ctk.CTkLabel(self, text="", font=("Arial", 18, "bold"))
+        self.lbl_feedback.pack(pady=10)
+
+    def update_target_text(self, choice):
+        self.box_target.configure(state="normal")
+        self.box_target.delete("0.0", "end")
+        self.box_target.insert("0.0", choice)
+        self.box_target.configure(state="disabled")
+
+    def toggle_recording(self):
+        # Kiểm tra API Key
+        self.api_key = self.entry_api.get().strip()
+        if not self.api_key:
+            self.lbl_status.configure(text="❌ Lỗi: Vui lòng nhập API Key!", text_color="#FF5555")
+            return
+
+        if not self.is_recording:
+            # Bắt đầu ghi âm
+            self.is_recording = True
+            self.btn_record.configure(text="⏹️ DỪNG GHI ÂM", fg_color="#d32f2f", hover_color="#9a0007")
+            self.lbl_status.configure(text="Đang ghi âm... (Hãy đọc to câu trên)", text_color="#FFA500")
+            
+            # Xóa kết quả cũ
+            self.update_textbox(self.txt_user_input, "")
+            self.lbl_score.configure(text="Điểm số: --", text_color="white")
+            self.lbl_confidence.configure(text="Chất lượng âm: --", text_color="white")
+            self.lbl_feedback.configure(text="")
+
+            # Chạy thread ghi âm
+            threading.Thread(target=self.run_recording, daemon=True).start()
+        else:
+            # Dừng ghi âm
+            self.is_recording = False
+            self.btn_record.configure(state="disabled", text="⏳ Đang xử lý...")
+            self.lbl_status.configure(text="Đang gửi dữ liệu lên Groq...", text_color="#4CAF50")
+
+    def run_recording(self):
         p = pyaudio.PyAudio()
-        stream = p.open(format=pyaudio.paInt16,
-                        channels=AUDIO_CHANNELS,
-                        rate=AUDIO_RATE,
-                        input=True,
-                        frames_per_buffer=AUDIO_CHUNK)
+        stream = p.open(format=pyaudio.paInt16, channels=AUDIO_CHANNELS,
+                        rate=AUDIO_RATE, input=True, frames_per_buffer=AUDIO_CHUNK)
         
         self.frames = []
         while self.is_recording:
@@ -43,46 +143,37 @@ class RecorderThread(QThread):
         stream.close()
         p.terminate()
 
-        # Lưu file WAV tạm
+        # Lưu file tạm và gọi API
+        self.save_and_process_audio()
+
+    def save_and_process_audio(self):
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         wf = wave.open(temp_file.name, 'wb')
         wf.setnchannels(AUDIO_CHANNELS)
-        wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
+        wf.setsampwidth(2) # 16 bit
         wf.setframerate(AUDIO_RATE)
         wf.writeframes(b''.join(self.frames))
         wf.close()
 
-        self.finished_recording.emit(temp_file.name)
+        # Chuyển sang xử lý API (trên luồng khác để không đơ UI)
+        threading.Thread(target=self.run_api_analysis, args=(temp_file.name,), daemon=True).start()
 
-    def stop(self):
-        self.is_recording = False
-
-# --- LUỒNG XỬ LÝ API (Worker Thread) ---
-class AnalyzerThread(QThread):
-    result_ready = pyqtSignal(str, float, float) # Text, Score, Confidence
-    error_occurred = pyqtSignal(str)
-
-    def __init__(self, api_key, audio_path, target_sentence):
-        super().__init__()
-        self.api_key = api_key
-        self.audio_path = audio_path
-        self.target_sentence = target_sentence
-
-    def run(self):
+    def run_api_analysis(self, file_path):
         try:
             client = Groq(api_key=self.api_key)
-            
-            with open(self.audio_path, "rb") as file:
-                # Gọi API theo đúng tài liệu kỹ thuật
+            target_text = self.combo_sentences.get()
+
+            with open(file_path, "rb") as file:
                 transcription = client.audio.transcriptions.create(
                     file=file,
-                    model="whisper-large-v3-turbo", 
+                    model="whisper-large-v3-turbo",
                     language="en",
-                    prompt=self.target_sentence, # Context giúp nhận diện tốt hơn
+                    prompt=target_text, # Context
                     response_format="verbose_json",
                     temperature=0.0
                 )
 
+            # Phân tích kết quả
             user_text = transcription.text.strip()
             
             # Tính Confidence (avg_logprob)
@@ -91,203 +182,53 @@ class AnalyzerThread(QThread):
                 probs = [seg['avg_logprob'] for seg in transcription.segments]
                 avg_logprob = sum(probs) / len(probs) if probs else 0
 
-            # Tính điểm giống nhau (Similarity Score)
-            matcher = difflib.SequenceMatcher(None, self.target_sentence.lower().strip(), user_text.lower().strip())
+            # Tính điểm giống nhau
+            matcher = difflib.SequenceMatcher(None, target_text.lower().strip(), user_text.lower().strip())
             score = matcher.ratio() * 100
 
-            self.result_ready.emit(user_text, score, avg_logprob)
+            # Cập nhật UI (phải dùng self.after để thread-safe trong Tkinter)
+            self.after(0, self.display_results, user_text, score, avg_logprob)
 
         except Exception as e:
-            self.error_occurred.emit(str(e))
+            self.after(0, lambda: self.lbl_status.configure(text=f"Lỗi: {str(e)}", text_color="#FF5555"))
         finally:
-            # Xóa file tạm sau khi gửi xong
-            if os.path.exists(self.audio_path):
-                os.remove(self.audio_path)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            self.after(0, self.reset_button)
 
-# --- GIAO DIỆN CHÍNH (GUI) ---
-class EnglishTutorApp(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Groq English Tutor - Luyện Nói Tiếng Anh")
-        self.setGeometry(100, 100, 500, 650)
-        self.setStyleSheet("background-color: #2b2b2b; color: #ffffff;")
+    def display_results(self, text, score, logprob):
+        self.update_textbox(self.txt_user_input, text)
+        self.lbl_status.configure(text="Hoàn tất!", text_color="gray")
 
-        # Data mẫu
-        self.sentences = [
-            "The quick brown fox jumps over the lazy dog.",
-            "I would like to improve my English pronunciation.",
-            "Artificial Intelligence is changing the world.",
-            "Can you recommend a good restaurant nearby?",
-            "Consistency is the key to success."
-        ]
+        # Màu sắc điểm số
+        score_color = "#4CAF50" if score > 85 else "#FFC107" if score > 60 else "#FF5555"
+        self.lbl_score.configure(text=f"Điểm số: {score:.1f}%", text_color=score_color)
 
-        self.initUI()
-        self.recorder_thread = RecorderThread()
-        self.recorder_thread.finished_recording.connect(self.process_audio)
-
-    def initUI(self):
-        main_widget = QWidget()
-        self.setCentralWidget(main_widget)
-        layout = QVBoxLayout()
-        layout.setSpacing(15)
-
-        # 1. Nhập API Key
-        lbl_api = QLabel("Groq API Key:")
-        lbl_api.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        layout.addWidget(lbl_api)
-
-        self.input_api = QLineEdit()
-        self.input_api.setPlaceholderText("Nhập API Key của bạn (gsk_...)")
-        self.input_api.setStyleSheet("padding: 8px; border-radius: 5px; background-color: #3d3d3d; border: 1px solid #555;")
-        self.input_api.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addWidget(self.input_api)
-
-        # 2. Chọn câu mẫu
-        lbl_select = QLabel("Chọn câu mẫu để luyện:")
-        layout.addWidget(lbl_select)
-
-        self.combo_sentences = QComboBox()
-        self.combo_sentences.addItems(self.sentences)
-        self.combo_sentences.setStyleSheet("padding: 8px; background-color: #3d3d3d; border: 1px solid #555;")
-        self.combo_sentences.currentIndexChanged.connect(self.update_target_display)
-        layout.addWidget(self.combo_sentences)
-
-        # Hiển thị câu mẫu to rõ
-        self.lbl_target = QLabel(self.sentences[0])
-        self.lbl_target.setWordWrap(True)
-        self.lbl_target.setStyleSheet("font-size: 18px; color: #4CAF50; font-weight: bold; margin: 10px 0;")
-        self.lbl_target.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.lbl_target)
-
-        # 3. Nút Ghi âm
-        self.btn_record = QPushButton("🎙️ BẮT ĐẦU GHI ÂM")
-        self.btn_record.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_record.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3; color: white; border-radius: 8px; padding: 15px; font-size: 14px; font-weight: bold;
-            }
-            QPushButton:hover { background-color: #1976D2; }
-        """)
-        self.btn_record.clicked.connect(self.toggle_recording)
-        layout.addWidget(self.btn_record)
-
-        # Trạng thái
-        self.lbl_status = QLabel("Sẵn sàng")
-        self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_status.setStyleSheet("color: #aaa; font-style: italic;")
-        layout.addWidget(self.lbl_status)
-
-        # 4. Kết quả
-        result_box = QWidget()
-        result_box.setStyleSheet("background-color: #3d3d3d; border-radius: 10px;")
-        result_layout = QVBoxLayout(result_box)
-
-        result_layout.addWidget(QLabel("Bạn đã nói:"))
-        self.txt_user_input = QTextEdit()
-        self.txt_user_input.setReadOnly(True)
-        self.txt_user_input.setFixedHeight(60)
-        self.txt_user_input.setStyleSheet("background-color: #2b2b2b; border: none;")
-        result_layout.addWidget(self.txt_user_input)
-
-        # Điểm số và Confidence
-        stats_layout = QHBoxLayout()
-        self.lbl_score = QLabel("Điểm số: --")
-        self.lbl_score.setStyleSheet("font-size: 14px; font-weight: bold;")
-        stats_layout.addWidget(self.lbl_score)
-
-        self.lbl_confidence = QLabel("Chất lượng âm: --")
-        self.lbl_confidence.setStyleSheet("font-size: 14px;")
-        stats_layout.addWidget(self.lbl_confidence)
-        
-        result_layout.addLayout(stats_layout)
-        layout.addWidget(result_box)
-
-        # Feedback text
-        self.lbl_feedback = QLabel("")
-        self.lbl_feedback.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_feedback.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 10px;")
-        layout.addWidget(self.lbl_feedback)
-
-        layout.addStretch()
-        main_widget.setLayout(layout)
-
-    def update_target_display(self):
-        self.lbl_target.setText(self.combo_sentences.currentText())
-
-    def toggle_recording(self):
-        api_key = self.input_api.text().strip()
-        if not api_key:
-            QMessageBox.warning(self, "Thiếu API Key", "Vui lòng nhập Groq API Key trước!")
-            return
-
-        if not self.recorder_thread.isRunning():
-            # Bắt đầu ghi âm
-            self.recorder_thread.start()
-            self.btn_record.setText("⏹️ DỪNG GHI ÂM")
-            self.btn_record.setStyleSheet("background-color: #F44336; color: white; border-radius: 8px; padding: 15px; font-size: 14px; font-weight: bold;")
-            self.lbl_status.setText("Đang ghi âm... (Hãy đọc câu trên)")
-            self.txt_user_input.clear()
-            self.lbl_feedback.clear()
-        else:
-            # Dừng ghi âm
-            self.recorder_thread.stop()
-            self.btn_record.setEnabled(False) # Khóa nút chờ xử lý
-            self.lbl_status.setText("Đang dừng và lưu file...")
-
-    def process_audio(self, file_path):
-        self.lbl_status.setText("Đang gửi lên Groq AI để chấm điểm...")
-        
-        # Gọi Worker Thread xử lý API để không treo giao diện
-        api_key = self.input_api.text().strip()
-        target = self.lbl_target.text()
-        
-        self.analyzer = AnalyzerThread(api_key, file_path, target)
-        self.analyzer.result_ready.connect(self.show_results)
-        self.analyzer.error_occurred.connect(self.show_error)
-        self.analyzer.start()
-
-    def show_results(self, user_text, score, logprob):
-        self.btn_record.setEnabled(True)
-        self.btn_record.setText("🎙️ BẮT ĐẦU GHI ÂM")
-        self.btn_record.setStyleSheet("background-color: #2196F3; color: white; border-radius: 8px; padding: 15px; font-size: 14px; font-weight: bold;")
-        self.lbl_status.setText("Hoàn tất.")
-
-        self.txt_user_input.setText(user_text)
-        
-        # Tô màu điểm số
-        color = "#4CAF50" if score > 85 else "#FFC107" if score > 60 else "#F44336"
-        self.lbl_score.setText(f"Điểm số: {score:.1f}%")
-        self.lbl_score.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {color};")
-
-        # Đánh giá Confidence
+        # Màu sắc confidence
         conf_text = "Rõ ràng"
         conf_color = "#4CAF50"
         if logprob < -0.4: conf_text, conf_color = "Trung bình", "#FFC107"
-        if logprob < -0.8: conf_text, conf_color = "Khó nghe/Ồn", "#F44336"
+        if logprob < -0.8: conf_text, conf_color = "Kém/Ồn", "#FF5555"
         
-        self.lbl_confidence.setText(f"Chất lượng âm: {conf_text} ({logprob:.2f})")
-        self.lbl_confidence.setStyleSheet(f"font-size: 14px; color: {conf_color};")
+        self.lbl_confidence.configure(text=f"Chất lượng âm: {conf_text} ({logprob:.2f})", text_color=conf_color)
 
-        # Feedback tổng quát
+        # Feedback
         if score > 90 and logprob > -0.5:
-            self.lbl_feedback.setText("TUYỆT VỜI! 🌟")
-            self.lbl_feedback.setStyleSheet("color: #4CAF50; font-size: 20px; font-weight: bold;")
+            self.lbl_feedback.configure(text="TUYỆT VỜI! 🌟", text_color="#4CAF50")
         elif score > 70:
-            self.lbl_feedback.setText("KHÁ TỐT! Cố gắng nói rõ hơn.")
-            self.lbl_feedback.setStyleSheet("color: #FFC107; font-size: 18px; font-weight: bold;")
+            self.lbl_feedback.configure(text="KHÁ TỐT! Cố gắng nói rõ hơn.", text_color="#FFC107")
         else:
-            self.lbl_feedback.setText("CHƯA ĐẠT. Thử lại nhé! ❌")
-            self.lbl_feedback.setStyleSheet("color: #F44336; font-size: 18px; font-weight: bold;")
+            self.lbl_feedback.configure(text="CHƯA ĐẠT. Thử lại nhé! ❌", text_color="#FF5555")
 
-    def show_error(self, message):
-        self.btn_record.setEnabled(True)
-        self.btn_record.setText("🎙️ BẮT ĐẦU GHI ÂM")
-        self.btn_record.setStyleSheet("background-color: #2196F3; color: white; border-radius: 8px; padding: 15px; font-size: 14px; font-weight: bold;")
-        self.lbl_status.setText("Lỗi!")
-        QMessageBox.critical(self, "Lỗi API", f"Có lỗi xảy ra:\n{message}")
+    def reset_button(self):
+        self.btn_record.configure(state="normal", text="🎙️ BẮT ĐẦU GHI ÂM", fg_color="#1f6aa5")
 
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    window = EnglishTutorApp()
-    window.show()
-    sys.exit(app.exec())
+    def update_textbox(self, textbox, content):
+        textbox.configure(state="normal")
+        textbox.delete("0.0", "end")
+        textbox.insert("0.0", content)
+        textbox.configure(state="disabled")
+
+if __name__ == "__main__":
+    app = EnglishTutorApp()
+    app.mainloop()
