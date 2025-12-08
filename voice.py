@@ -190,7 +190,10 @@ class EnglishTutorApp(ctk.CTk):
             self.after(0, self.display_results, user_text, score, avg_logprob)
 
         except Exception as e:
-            self.after(0, lambda: self.lbl_status.configure(text=f"Lỗi: {str(e)}", text_color="#FF5555"))
+            # --- SỬA LỖI TẠI ĐÂY ---
+            # Lưu nội dung lỗi vào biến chuỗi ngay lập tức trước khi e bị xóa
+            err_msg = str(e) 
+            self.after(0, lambda: self.lbl_status.configure(text=f"Lỗi: {err_msg}", text_color="#FF5555"))
         finally:
             if os.path.exists(file_path):
                 os.remove(file_path)
