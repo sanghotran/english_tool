@@ -262,15 +262,14 @@ class EnglishApp(ctk.CTk):
 
         try:
             client = Groq(api_key=key)
-            target = self.current_item.text if self.current_item else ""
+            # target = self.current_item.text if self.current_item else ""  <-- BỎ DÒNG NÀY (Không lấy đáp án làm gợi ý nữa)
             
             with open(file_path, "rb") as file:
-                # Dùng model Whisper cho Audio (KHÔNG ĐỤNG ĐẾN MODEL TEXT CỦA BẠN)
                 transcription = client.audio.transcriptions.create(
                     file=file,
-                    model="whisper-large-v3-turbo", 
+                    model="whisper-large-v3-turbo",
                     language="en",
-                    prompt=target, 
+                    # prompt=target, <-- BỎ DÒNG NÀY (Không nhắc bài cho AI)
                     response_format="verbose_json",
                     temperature=0.0
                 )
@@ -278,13 +277,25 @@ class EnglishApp(ctk.CTk):
             # Xử lý kết quả
             user_text = transcription.text.strip()
             
-            # Tính Confidence
+            # --- KIỂM TRA IM LẶNG (NO SPEECH PROB) ---
             avg_logprob = 0
+            no_speech_prob = 0
             if hasattr(transcription, 'segments') and transcription.segments:
+                # Lấy chỉ số no_speech_prob của segment đầu tiên
+                no_speech_prob = transcription.segments[0].get('no_speech_prob', 0)
+                
                 probs = [seg['avg_logprob'] for seg in transcription.segments]
                 avg_logprob = sum(probs) / len(probs) if probs else 0
 
+            # Nếu xác suất "không có tiếng nói" quá cao (> 0.5) hoặc text rỗng
+            if no_speech_prob > 0.5 or not user_text:
+                self.after(0, lambda: self.lbl_voice_status.configure(text="❌ Không nghe thấy gì (Hoặc ồn)", text_color="red"))
+                self.after(0, self._reset_mic_ui)
+                return
+
             # Tính điểm khớp (Similarity)
+            # target vẫn dùng để so sánh kết quả, nhưng KHÔNG gửi cho AI biết trước
+            target = self.current_item.text if self.current_item else ""
             matcher = difflib.SequenceMatcher(None, target.lower().strip(), user_text.lower().strip())
             similarity = matcher.ratio() * 100
 
@@ -294,7 +305,10 @@ class EnglishApp(ctk.CTk):
         except Exception as e:
             self.after(0, lambda: self.lbl_voice_status.configure(text=f"Lỗi: {str(e)}", text_color="red"))
         finally:
-            if os.path.exists(file_path): os.remove(file_path)
+            # Sửa lỗi WinError 32: Đảm bảo file đóng trước khi xóa
+            try:
+                if os.path.exists(file_path): os.remove(file_path)
+            except: pass
             self.after(0, self._reset_mic_ui)
 
     def _show_voice_result(self, text, score, logprob):
