@@ -8,15 +8,22 @@ import pygame
 import random
 import io
 import difflib
-import speech_recognition as sr
+import os
+import tempfile
+import wave
+import pyaudio # Cần pip install pyaudio
 from deep_translator import GoogleTranslator
 from peewee import *
 from groq import Groq
 
 # ==========================================
-# 1. CẤU HÌNH DATABASE
+# 1. CẤU HÌNH DATABASE & AUDIO
 # ==========================================
 db = SqliteDatabase('english_pro.db')
+# Cấu hình Audio cho Groq Whisper (Bắt buộc 16kHz)
+AUDIO_RATE = 16000     
+AUDIO_CHANNELS = 1
+AUDIO_CHUNK = 1024
 
 class BaseModel(Model):
     class Meta:
@@ -50,18 +57,21 @@ ctk.set_default_color_theme("blue")
 class EnglishApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Super English Pro: Smart Loop")
+        self.title("Super English Pro: Smart Loop (+Groq Voice)")
         self.geometry("1100x850")
 
         try:
             pygame.mixer.init()
-            self.recognizer = sr.Recognizer()
         except: pass
 
         self.mode = "sentence"
         self.review_queue = []
         self.current_item = None
-        self.temp_suggested_sentence = "" # Biến lưu câu gợi ý của AI
+        self.temp_suggested_sentence = "" 
+        
+        # --- BIẾN CHO VOICE RECORDER (MỚI) ---
+        self.is_recording = False
+        self.audio_frames = []
 
         # --- SIDEBAR ---
         self.grid_columnconfigure(1, weight=1)
@@ -97,7 +107,7 @@ class EnglishApp(ctk.CTk):
         # Init Frames
         self.frame_add = self.ui_add_unified()
         self.frame_sent = self.ui_sent_review()
-        self.frame_vocab = self.ui_vocab_review() # <--- ĐÃ SỬA CÁI NÀY
+        self.frame_vocab = self.ui_vocab_review()
         self.frame_settings = self.ui_settings()
 
         self.frames = [self.frame_add, self.frame_sent, self.frame_vocab, self.frame_settings]
@@ -163,7 +173,7 @@ class EnglishApp(ctk.CTk):
                 self.lbl_stats.configure(text=f"[TỪ]\nTổng: {vocab_total} | Cần ôn: {due}")
         except: pass
 
-    # --- TTS & MIC ---
+    # --- TTS ---
     def play_audio(self, text):
         threading.Thread(target=self._tts_thread, args=(text,)).start()
 
@@ -189,20 +199,128 @@ class EnglishApp(ctk.CTk):
             pygame.mixer.music.play()
         except: pass
 
-    def start_record(self, entry_widget):
-        threading.Thread(target=self._record_thread, args=(entry_widget,)).start()
+    # --- [PHẦN SỬA ĐỔI DUY NHẤT]: LOGIC GHI ÂM & CHẤM ĐIỂM BẰNG GROQ WHISPER ---
+    def toggle_recording(self, event=None):
+        if not self.is_recording:
+            # Bắt đầu ghi
+            self.is_recording = True
+            self.btn_mic.configure(text="⏹️ DỪNG & CHẤM ĐIỂM", fg_color="#d32f2f")
+            self.lbl_voice_status.configure(text="🔴 Đang nghe... (Đọc to câu trên)", text_color="#FF5252")
+            self.entry_sent_ans.delete(0, "end")
+            threading.Thread(target=self._record_thread).start()
+        else:
+            # Dừng ghi
+            self.is_recording = False
+            self.btn_mic.configure(text="⏳ Đang xử lý...", state="disabled")
 
-    def _record_thread(self, entry_widget):
+    def _record_thread(self):
+        p = pyaudio.PyAudio()
+        stream = p.open(format=pyaudio.paInt16, channels=AUDIO_CHANNELS,
+                        rate=AUDIO_RATE, input=True, frames_per_buffer=AUDIO_CHUNK)
+        self.audio_frames = []
+        
+        while self.is_recording:
+            data = stream.read(AUDIO_CHUNK)
+            self.audio_frames.append(data)
+
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+
+        # Sau khi dừng, lưu file và gửi API
+        self.save_and_analyze_audio()
+
+    def save_and_analyze_audio(self):
         try:
-            with sr.Microphone() as source:
-                self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=10)
-                text = self.recognizer.recognize_google(audio, language="en-US")
-                self.after(0, lambda: [entry_widget.delete(0, "end"), entry_widget.insert(0, text)])
-        except: messagebox.showinfo("Mic", "Không nghe rõ!")
+            # 1. Tạo file tạm
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+            # QUAN TRỌNG: Phải đóng handle file tạm ngay lập tức trên Windows
+            # để tránh lỗi "File being used by another process"
+            temp_file.close() 
+            
+            # 2. Mở file bằng đường dẫn (path) để ghi dữ liệu âm thanh
+            wf = wave.open(temp_file.name, 'wb')
+            wf.setnchannels(AUDIO_CHANNELS)
+            wf.setsampwidth(2) # 16 bit
+            wf.setframerate(AUDIO_RATE)
+            wf.writeframes(b''.join(self.audio_frames))
+            wf.close()
+            
+            # 3. Gửi đi phân tích
+            self.after(0, lambda: self.lbl_voice_status.configure(text="📡 Đang gửi lên Groq...", text_color="#2196F3"))
+            self._call_groq_whisper(temp_file.name)
+            
+        except Exception as e:
+            print(f"Lỗi save audio: {e}")
+            self.after(0, self._reset_mic_ui)
+
+    def _call_groq_whisper(self, file_path):
+        key = self.get_key()
+        if not key:
+            self.after(0, lambda: [messagebox.showerror("Lỗi", "Chưa nhập API Key!"), self._reset_mic_ui()])
+            return
+
+        try:
+            client = Groq(api_key=key)
+            target = self.current_item.text if self.current_item else ""
+            
+            with open(file_path, "rb") as file:
+                # Dùng model Whisper cho Audio (KHÔNG ĐỤNG ĐẾN MODEL TEXT CỦA BẠN)
+                transcription = client.audio.transcriptions.create(
+                    file=file,
+                    model="whisper-large-v3-turbo", 
+                    language="en",
+                    prompt=target, 
+                    response_format="verbose_json",
+                    temperature=0.0
+                )
+            
+            # Xử lý kết quả
+            user_text = transcription.text.strip()
+            
+            # Tính Confidence
+            avg_logprob = 0
+            if hasattr(transcription, 'segments') and transcription.segments:
+                probs = [seg['avg_logprob'] for seg in transcription.segments]
+                avg_logprob = sum(probs) / len(probs) if probs else 0
+
+            # Tính điểm khớp (Similarity)
+            matcher = difflib.SequenceMatcher(None, target.lower().strip(), user_text.lower().strip())
+            similarity = matcher.ratio() * 100
+
+            # Cập nhật UI
+            self.after(0, lambda: self._show_voice_result(user_text, similarity, avg_logprob))
+
+        except Exception as e:
+            self.after(0, lambda: self.lbl_voice_status.configure(text=f"Lỗi: {str(e)}", text_color="red"))
+        finally:
+            if os.path.exists(file_path): os.remove(file_path)
+            self.after(0, self._reset_mic_ui)
+
+    def _show_voice_result(self, text, score, logprob):
+        # Điền text vào ô
+        self.entry_sent_ans.delete(0, "end")
+        self.entry_sent_ans.insert(0, text)
+        
+        # Đánh giá Confidence
+        conf_text = "Rõ ràng"
+        conf_color = "#4CAF50" # Green
+        if logprob < -0.4: conf_text, conf_color = "Trung bình", "#FFC107"
+        if logprob < -0.8: conf_text, conf_color = "Khó nghe/Ồn", "#FF5252"
+
+        # Hiển thị feedback
+        result_msg = f"Độ khớp: {score:.1f}% | Giọng: {conf_text} ({logprob:.2f})"
+        self.lbl_voice_status.configure(text=result_msg, text_color=conf_color)
+        
+        # Tự động check luôn nếu điểm cao
+        if score > 90:
+            self.check_sent()
+
+    def _reset_mic_ui(self):
+        self.btn_mic.configure(text="🎤 NÓI (F2)", fg_color="#D84315", state="normal")
 
     # ==========================================
-    # 4. UI THÊM DỮ LIỆU
+    # 5. UI THÊM DỮ LIỆU
     # ==========================================
     def ui_add_unified(self):
         frame = ctk.CTkFrame(self.main, fg_color="transparent")
@@ -237,7 +355,6 @@ class EnglishApp(ctk.CTk):
         self.txt_vocab_input = ctk.CTkTextbox(tab_vocab, height=250, font=("Arial", 14))
         self.txt_vocab_input.pack(fill="both", expand=True, pady=10)
         
-        # Nút Lưu Từ
         self.btn_save_vocab = ctk.CTkButton(tab_vocab, text="Lưu & Lấy HDSD (Groq)", fg_color="#D84315", height=40, command=self.save_vocab_ai)
         self.btn_save_vocab.pack(fill="x", pady=10)
 
@@ -279,6 +396,7 @@ class EnglishApp(ctk.CTk):
         try:
             client = Groq(api_key=key)
             prompt = f"List 10 English words about '{topic}'. Only words, one per line. No numbering."
+            # [ĐÃ KHÔI PHỤC MODEL CỦA BẠN]
             res = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="openai/gpt-oss-120b").choices[0].message.content
             self.after(0, lambda: [self.txt_vocab_input.delete("1.0", "end"), self.txt_vocab_input.insert("1.0", res.strip())])
         except Exception as e:
@@ -320,7 +438,7 @@ class EnglishApp(ctk.CTk):
             Example:
             Serendipity || Sự tình cờ may mắn || Dùng khi tìm thấy điều tốt đẹp không chủ đích.
             """
-            
+            # [ĐÃ KHÔI PHỤC MODEL CỦA BẠN]
             res = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="openai/gpt-oss-120b").choices[0].message.content
             
             # Xử lý kết quả trả về
@@ -333,7 +451,6 @@ class EnglishApp(ctk.CTk):
                         m = parts[1].strip()
                         u = parts[2].strip()
                         full_meaning = f"{m}\n💡 HDSD: {u}"
-                        
                         try:
                             Vocabulary.get_or_create(word=w, defaults={'meaning': full_meaning})
                             count += 1
@@ -368,7 +485,7 @@ class EnglishApp(ctk.CTk):
         messagebox.showinfo("OK", f"Đã thêm {c} từ (Google).")
 
     # ==========================================
-    # 6. ÔN CÂU (SENTENCE REVIEW)
+    # 6. ÔN CÂU (SENTENCE REVIEW) - CẬP NHẬT VOICE MỚI
     # ==========================================
     def ui_sent_review(self):
         frame = ctk.CTkFrame(self.main, fg_color="transparent")
@@ -378,7 +495,10 @@ class EnglishApp(ctk.CTk):
         f_btn = ctk.CTkFrame(frame, fg_color="transparent")
         f_btn.pack(fill="x", pady=5)
         ctk.CTkButton(f_btn, text="🔊 NGHE (F1)", command=lambda: self.play_audio(self.current_item.text)).pack(side="left", fill="x", expand=True, padx=5)
-        ctk.CTkButton(f_btn, text="🎤 NÓI (F2)", fg_color="#D84315", command=lambda: self.start_record(self.entry_sent_ans)).pack(side="right", fill="x", expand=True, padx=5)
+        
+        # --- [SỬA ĐỔI] DÙNG HÀM MỚI ---
+        self.btn_mic = ctk.CTkButton(f_btn, text="🎤 NÓI (F2)", fg_color="#D84315", command=self.toggle_recording)
+        self.btn_mic.pack(side="right", fill="x", expand=True, padx=5)
 
         self.lbl_sent_mean = ctk.CTkLabel(frame, text="", font=("Arial", 14, "italic"), text_color="#FFA726", wraplength=800)
         self.lbl_sent_mean.pack(pady=10)
@@ -386,8 +506,13 @@ class EnglishApp(ctk.CTk):
         self.entry_sent_ans = ctk.CTkEntry(frame, font=("Arial", 18), height=50)
         self.entry_sent_ans.pack(fill="x", pady=5)
         self.entry_sent_ans.bind("<Return>", self.check_sent)
+        
         self.entry_sent_ans.bind("<F1>", lambda e: self.play_audio(self.current_item.text))
-        self.entry_sent_ans.bind("<F2>", lambda e: self.start_record(self.entry_sent_ans))
+        self.entry_sent_ans.bind("<F2>", self.toggle_recording)
+
+        # --- [SỬA ĐỔI] LABEL HIỂN THỊ ĐÁNH GIÁ GIỌNG NÓI ---
+        self.lbl_voice_status = ctk.CTkLabel(frame, text="", font=("Arial", 14, "bold"))
+        self.lbl_voice_status.pack(pady=5)
 
         self.txt_diff = ctk.CTkTextbox(frame, height=100, font=("Consolas", 16), fg_color="#222")
         self.txt_diff.pack(fill="x", pady=10)
@@ -418,6 +543,7 @@ class EnglishApp(ctk.CTk):
         self.entry_sent_ans.delete(0, "end")
         self.entry_sent_ans.focus()
         self.lbl_sent_mean.configure(text="") 
+        self.lbl_voice_status.configure(text="") # Reset status giọng nói
         self.txt_diff.delete("1.0", "end")
         self.btn_sent_next.configure(state="disabled")
         self.after(500, lambda: self.play_audio(self.current_item.text))
@@ -486,7 +612,7 @@ class EnglishApp(ctk.CTk):
             self.after(0, lambda: self.lbl_sent_mean.configure(text=t))
 
     # ==========================================
-    # 7. ÔN TỪ (VOCAB REVIEW) - ĐÃ THÊM NÚT LƯU
+    # 7. ÔN TỪ (VOCAB REVIEW)
     # ==========================================
     def ui_vocab_review(self):
         frame = ctk.CTkFrame(self.main, fg_color="transparent")
@@ -539,8 +665,8 @@ class EnglishApp(ctk.CTk):
         self.entry_vocab_sent.focus()
         self.lbl_vocab_feed.configure(text="")
         self.btn_vocab_next.configure(state="disabled")
-        self.btn_save_suggested.configure(state="disabled") # Reset nút lưu
-        self.temp_suggested_sentence = "" # Reset biến tạm
+        self.btn_save_suggested.configure(state="disabled")
+        self.temp_suggested_sentence = ""
         self.after(500, lambda: self.play_audio(self.current_item.word))
 
     def check_vocab(self, event=None):
@@ -565,13 +691,12 @@ class EnglishApp(ctk.CTk):
             """
             res = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="openai/gpt-oss-120b").choices[0].message.content
             
-            # Xử lý kết quả để lấy Better Version
             parts = res.split("||")
-            display_text = res.replace("||", "\n") # Hiển thị đẹp
+            display_text = res.replace("||", "\n")
             
             if len(parts) >= 3:
-                self.temp_suggested_sentence = parts[2].strip() # Lưu câu gợi ý vào biến tạm
-                self.after(0, lambda: self.btn_save_suggested.configure(state="normal")) # Bật nút lưu
+                self.temp_suggested_sentence = parts[2].strip()
+                self.after(0, lambda: self.btn_save_suggested.configure(state="normal"))
 
             self.after(0, lambda: [
                 self.lbl_vocab_feed.configure(text=display_text, text_color="white"),
@@ -579,7 +704,6 @@ class EnglishApp(ctk.CTk):
                 self.btn_vocab_next.focus()
             ])
             
-            # SRS
             self.review_queue.pop(0)
             self.current_item.level += 1
             self.current_item.next_review = datetime.date.today() + datetime.timedelta(days=2**(self.current_item.level-1))
@@ -588,29 +712,19 @@ class EnglishApp(ctk.CTk):
             self.after(0, lambda: self.lbl_vocab_feed.configure(text=f"Lỗi: {e}", text_color="red"))
 
     def save_suggested_sentence(self):
-        # 1. Làm sạch chuỗi trước khi lưu
         text_to_save = self.temp_suggested_sentence.strip()
-        
         if not text_to_save:
             messagebox.showwarning("Chú ý", "Không có nội dung để lưu.")
             return
 
         try:
-            # 2. Dùng get_or_create đúng cách
-            # Hàm này trả về 2 giá trị: (đối tượng, created=True/False)
             obj, created = Sentence.get_or_create(text=text_to_save)
-            
             if created:
-                # Trường hợp A: Chưa có -> Tạo mới thành công
                 messagebox.showinfo("Thành công", f"Đã lưu câu mới vào Dictation:\n\n{text_to_save}")
                 self.btn_save_suggested.configure(state="disabled", text="Đã lưu!")
             else:
-                # Trường hợp B: Đã có trong kho -> Báo trùng
-                messagebox.showinfo("Thông báo", "Câu này thực tế ĐÃ CÓ trong kho rồi (Bạn có thể tìm thấy ở phần Ôn Câu).")
-                
+                messagebox.showinfo("Thông báo", "Câu này thực tế ĐÃ CÓ trong kho rồi.")
         except Exception as e:
-            # Trường hợp C: Lỗi kỹ thuật thực sự (In chi tiết lỗi ra để debug)
-            print(f"Lỗi chi tiết: {e}")
             messagebox.showerror("Lỗi Kỹ Thuật", f"Không lưu được. Chi tiết lỗi:\n{e}")
 
     # ==========================================
