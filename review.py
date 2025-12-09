@@ -45,8 +45,13 @@ class Settings(BaseModel):
     key = CharField(unique=True) 
     value = TextField()
 
+class AudioCache(BaseModel):
+    text = TextField(unique=True)
+    data = BlobField()
+    creatated_at = DateTimeField(default=datetime.datetime.now)
+
 db.connect()
-db.create_tables([Sentence, Vocabulary, Settings], safe=True)
+db.create_tables([Sentence, Vocabulary, Settings, AudioCache], safe=True)
 
 # ==========================================
 # 2. GIAO DIỆN CHÍNH
@@ -174,63 +179,108 @@ class EnglishApp(ctk.CTk):
         except: pass
 
     # ==========================================
-    # --- PHẦN TTS MỚI (DÙNG GROQ PLAYAI) ---
+    # --- PHẦN TTS CACHING (LƯU DB ĐỂ TIẾT KIỆM) ---
     # ==========================================
     def play_audio(self, text):
         if not text or not text.strip(): return
-        # Chạy luồng riêng để không đơ UI
-        threading.Thread(target=self._tts_thread, args=(text,)).start()
+        # Chạy luồng riêng
+        threading.Thread(target=self._tts_caching_manager, args=(text,)).start()
 
-    def _tts_thread(self, text):
+    def _tts_caching_manager(self, text):
+        # BƯỚC 1: KIỂM TRA TRONG DATABASE (CACHE)
+        try:
+            cached_audio = AudioCache.get_or_none(AudioCache.text == text)
+            if cached_audio:
+                # print("✅ Đã có trong Cache -> Lấy ra dùng ngay!")
+                self._play_from_bytes(cached_audio.data)
+                return
+        except Exception as e:
+            print(f"Lỗi đọc Cache: {e}")
+
+        # BƯỚC 2: NẾU CHƯA CÓ -> GỌI API (TỐN TIỀN/LIMIT)
+        audio_bytes = None
+        
+        # 2a. Thử Groq
         key = self.get_key()
-        if not key:
-            print("Chưa có API Key để đọc giọng Groq")
-            return
+        if key:
+            audio_bytes = self._get_groq_audio_bytes(text, key)
+        
+        # 2b. Nếu Groq thất bại -> Thử Google
+        if not audio_bytes:
+            print("⚠️ Chuyển sang Google TTS...")
+            audio_bytes = self._get_google_audio_bytes(text)
 
+        # BƯỚC 3: LƯU VÀO DB VÀ PHÁT
+        if audio_bytes:
+            # Lưu vào DB để lần sau không phải gọi nữa
+            try:
+                AudioCache.create(text=text, data=audio_bytes)
+                # print("💾 Đã lưu âm thanh vào DB")
+            except: pass # Có thể lỗi trùng lặp do đa luồng, kệ nó
+
+            # Phát âm thanh
+            self._play_from_bytes(audio_bytes)
+        else:
+            print("❌ Thất bại toàn tập: Không tạo được âm thanh.")
+
+    # --- HÀM LẤY DATA TỪ GROQ ---
+    def _get_groq_audio_bytes(self, text, key):
         try:
             client = Groq(api_key=key)
-            
-            # 1. Gọi API Groq TTS
-            # model: playai-tts (Tiếng Anh)
-            # voice: Có nhiều giọng: "Gail-PlayAI" (Nữ), "Fritz-PlayAI" (Nam), "Atlas-PlayAI"...
             response = client.audio.speech.create(
                 model="playai-tts",
-                voice="Gail-PlayAI", 
+                voice="Gail-PlayAI",
                 input=text,
-                response_format="wav"
+                response_format="mp3" 
             )
+            # SỬA LỖI TẠI ĐÂY:
+            # Thay response.content bằng response.read()
+            return response.read() 
+        except Exception as e:
+            print(f"Lỗi Groq API: {e}")
+            return None
 
-            # 2. Tạo file tạm an toàn trên Windows
-            # Lưu ý: Phải close() ngay để tránh lỗi WinError 32 khi ghi dữ liệu
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    # --- HÀM LẤY DATA TỪ GOOGLE ---
+    def _get_google_audio_bytes(self, text):
+        try:
+            from gtts import gTTS # Import ở đây hoặc đầu file
+            tts = gTTS(text=text, lang='en', tld='com')
+            
+            # Lưu vào RAM (BytesIO) để lấy bytes
+            fp = io.BytesIO()
+            tts.write_to_fp(fp)
+            fp.seek(0)
+            return fp.read()
+        except Exception as e:
+            print(f"Lỗi Google TTS: {e}")
+            return None
+
+    # --- HÀM PHÁT TỪ BYTES (BINARY) ---
+    def _play_from_bytes(self, data_bytes):
+        try:
+            # Đổi đuôi file thành .mp3 để Pygame nhận diện đúng định dạng
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") 
+            temp_file.write(data_bytes)
             temp_file.close() 
 
-            # 3. Ghi dữ liệu âm thanh vào file
-            # Groq SDK hỗ trợ phương thức write_to_file
-            response.write_to_file(temp_file.name)
-
-            # 4. Phát âm thanh bằng Pygame
+            # Reset Mixer
             if pygame.mixer.music.get_busy():
                 pygame.mixer.music.stop()
-            try:
-                pygame.mixer.music.unload()
+            try: pygame.mixer.music.unload()
             except: pass
 
             pygame.mixer.music.load(temp_file.name)
             pygame.mixer.music.play()
 
-            # Chờ đọc xong để không bị cắt giữa chừng nếu gọi liên tục
             while pygame.mixer.music.get_busy():
                 pygame.time.Clock().tick(10)
 
         except Exception as e:
-            print(f"Lỗi Groq TTS: {e}")
+            print(f"Lỗi phát âm thanh: {e}")
         finally:
-            # 5. Dọn dẹp file tạm
             try:
                 if 'temp_file' in locals() and os.path.exists(temp_file.name):
-                    # Đợi một chút để chắc chắn pygame đã nhả file
-                    pygame.time.Clock().tick(10) 
+                    pygame.time.Clock().tick(10)
                     os.remove(temp_file.name)
             except: pass
 
