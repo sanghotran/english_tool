@@ -173,31 +173,66 @@ class EnglishApp(ctk.CTk):
                 self.lbl_stats.configure(text=f"[TỪ]\nTổng: {vocab_total} | Cần ôn: {due}")
         except: pass
 
-    # --- TTS ---
+    # ==========================================
+    # --- PHẦN TTS MỚI (DÙNG GROQ PLAYAI) ---
+    # ==========================================
     def play_audio(self, text):
+        if not text or not text.strip(): return
+        # Chạy luồng riêng để không đơ UI
         threading.Thread(target=self._tts_thread, args=(text,)).start()
 
     def _tts_thread(self, text):
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self._tts_stream(text))
-            loop.close()
-        except: pass
+        key = self.get_key()
+        if not key:
+            print("Chưa có API Key để đọc giọng Groq")
+            return
 
-    async def _tts_stream(self, text):
         try:
-            communicate = edge_tts.Communicate(text, "en-US-AriaNeural")
-            audio_data = b""
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio": audio_data += chunk["data"]
-            virtual_file = io.BytesIO(audio_data)
-            if pygame.mixer.music.get_busy(): pygame.mixer.music.stop()
-            try: pygame.mixer.music.unload()
+            client = Groq(api_key=key)
+            
+            # 1. Gọi API Groq TTS
+            # model: playai-tts (Tiếng Anh)
+            # voice: Có nhiều giọng: "Gail-PlayAI" (Nữ), "Fritz-PlayAI" (Nam), "Atlas-PlayAI"...
+            response = client.audio.speech.create(
+                model="playai-tts",
+                voice="Gail-PlayAI", 
+                input=text,
+                response_format="wav"
+            )
+
+            # 2. Tạo file tạm an toàn trên Windows
+            # Lưu ý: Phải close() ngay để tránh lỗi WinError 32 khi ghi dữ liệu
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+            temp_file.close() 
+
+            # 3. Ghi dữ liệu âm thanh vào file
+            # Groq SDK hỗ trợ phương thức write_to_file
+            response.write_to_file(temp_file.name)
+
+            # 4. Phát âm thanh bằng Pygame
+            if pygame.mixer.music.get_busy():
+                pygame.mixer.music.stop()
+            try:
+                pygame.mixer.music.unload()
             except: pass
-            pygame.mixer.music.load(virtual_file)
+
+            pygame.mixer.music.load(temp_file.name)
             pygame.mixer.music.play()
-        except: pass
+
+            # Chờ đọc xong để không bị cắt giữa chừng nếu gọi liên tục
+            while pygame.mixer.music.get_busy():
+                pygame.time.Clock().tick(10)
+
+        except Exception as e:
+            print(f"Lỗi Groq TTS: {e}")
+        finally:
+            # 5. Dọn dẹp file tạm
+            try:
+                if 'temp_file' in locals() and os.path.exists(temp_file.name):
+                    # Đợi một chút để chắc chắn pygame đã nhả file
+                    pygame.time.Clock().tick(10) 
+                    os.remove(temp_file.name)
+            except: pass
 
     # --- [PHẦN SỬA ĐỔI DUY NHẤT]: LOGIC GHI ÂM & CHẤM ĐIỂM BẰNG GROQ WHISPER ---
     def toggle_recording(self, event=None):
